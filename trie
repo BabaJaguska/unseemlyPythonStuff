@@ -1,0 +1,75 @@
+class Trie(object):
+    
+    def __init__(self):
+        self.root = node('\0')
+        
+
+    def insert(self, word):
+        """
+        :type word: str
+        :rtype: None
+        """
+               
+        currentNode = self.root
+        for char in word:
+            child = currentNode.hasChild(char)
+            if child is None:
+                child = currentNode.addChild(char)
+            currentNode = child
+                
+        currentNode.isWord = True
+        return 
+        
+
+    def search(self, word):
+        """
+        :type word: str
+        :rtype: bool
+        """
+        foundAt = self.getNode(word)
+        if foundAt is not None and foundAt.isWord:
+            return True
+        else:
+            return False
+        
+
+    def startsWith(self, prefix):
+        """
+        :type prefix: str
+        :rtype: bool
+        """
+        foundAt = self.getNode(prefix)
+        if foundAt is not None:
+            return True
+        else:
+            return False
+        
+    def getNode(self, word):
+        currentNode = self.root
+        for char in word:
+            child = currentNode.hasChild(char)
+            if child is None:
+                return None
+            currentNode = child
+            
+        return currentNode
+        
+            
+        
+class node(object):
+    def __init__(self, element):
+        self.element = element
+        self.children = []
+        self.isWord = False
+                 
+    def hasChild(self,char):
+        for child in self.children:
+            if child.element == char:
+                 return child
+        return None
+    
+    def addChild(self,char):
+        child = node(char)
+        self.children.append(child)
+        return child
+                 
