@@ -3,6 +3,8 @@ import scipy.stats
 import matplotlib.pyplot as plt
 import logging
 import json
+import pylatex
+import subprocess
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -19,22 +21,23 @@ class AuthorAnalyzer:
         with open(config_path, 'r') as f:
             return json.load(f)
         
-    def filter_data(self, df):
-        if self.config['filter_out_arxiv']:
+    def filter_data(self, df, exclude_preprints=False):
+        if exclude_preprints:
             total_len = len(df)
             df['citation'] = df['citation'].fillna('').astype(str)
             df = df[~df['citation'].str.contains('rxiv', case=False, na=False)]
             logger.info(f"Filtered out {total_len - len(df)} papers from Rxiv.")
         return df
 
-    def analyze_csv(self, csv_path):
+    def analyze_csv(self, csv_path, exclude_preprints=False):
         df = pd.read_csv(csv_path)
-        df = self.filter_data(df)
-        summary_json = self.summarize_data(df)
+        df = self.filter_data(df, exclude_preprints)
+        summary_json = self.summarize_data(df, exclude_preprints=exclude_preprints)
         self.generate_plots_with_percentiles(summary_json)
+        return summary_json
 
-    def summarize_data(self, df):
-        output_json = "author_summary.json" if self.config['filter_out_arxiv'] else "author_summary_no_preprint.json"
+    def summarize_data(self, df, exclude_preprints=False):
+        output_json = "author_summary_no_preprint.json" if exclude_preprints else "author_summary.json"
         unique_authors = df['author'].unique()
         N_authors = len(unique_authors)
         missing_authors = [author for author in self.authors_fullname if author not in unique_authors]
@@ -58,6 +61,7 @@ class AuthorAnalyzer:
 
         summary_json = {
             'N_authors': N_authors,
+            'preprints_excluded': exclude_preprints,
             'papers_per_author': author_counts.to_dict(),
             'citations_per_author': df_auth.to_dict(),
             'paper_percentiles': {str(k): float(round(v,2)) for k, v in papers_percentiles.items()},
@@ -69,6 +73,10 @@ class AuthorAnalyzer:
             'specific_author_n_citations': int(df_auth.get(self.specific_author, 0)),
             'specific_n_papers_percentile': round(float(paper_percentile), 2) if paper_percentile else None,
             'specific_n_citations_percentile': round(float(citation_percentile), 2) if citation_percentile else None,
+            'summary_json': output_json,
+            'n_papers_plot': "author_n_papers_no_preprint.png" if exclude_preprints else "author_n_papers.png",
+            'n_citations_plot': "author_citations_no_preprint.png" if exclude_preprints else "author_citations.png",   
+            'label': "No Preprints" if exclude_preprints else "Full"
         }
 
         with open(output_json, 'w') as file:
@@ -80,16 +88,24 @@ class AuthorAnalyzer:
     def generate_plots_with_percentiles(self, summary_json):
 
         self.plot_bar_chart(
-            summary_json['papers_per_author'], "Number of papers by author in 2024", "Number of papers",
-            summary_json['paper_percentiles'], "author_counts.png", summary_json['specific_author']
+            summary_json['papers_per_author'],
+            "Number of papers by author in 2024",
+            "Number of papers",
+            summary_json['paper_percentiles'],
+            summary_json['n_papers_plot'],
+            summary_json['specific_author']
         )
         self.plot_bar_chart(
-            summary_json['citations_per_author'], "Total citations by author in 2024", "Total citations",
-            summary_json['citation_percentiles'], "author_citations.png", summary_json['specific_author']
+            summary_json['citations_per_author'],
+            "Total citations by author in 2024",
+            "Total citations",
+            summary_json['citation_percentiles'],
+            summary_json['n_citations_plot'],
+            summary_json['specific_author']
         )
 
-    def plot_bar_chart(self, data_dict, title, ylabel, percentiles_dict, output_file, highlight_author=None):
-        if self.config.get('filter_out_arxiv', False):
+    def plot_bar_chart(self, data_dict, title, ylabel, percentiles_dict, output_file, highlight_author=None, exclude_preprints=False):
+        if exclude_preprints:
             title += " (excluding Rxiv)"
             output_file = output_file.replace(".png", "_no_preprint.png")
 
@@ -133,7 +149,85 @@ class AuthorAnalyzer:
         plt.close()
         logger.info(f"Plot saved to {output_file}")
     
+    @staticmethod
+    def generate_latex_report(summary_list):
+        def add_summary_section(doc, title, summary):
+            doc.append(pylatex.Section(title))
+            doc.append(pylatex.NoEscape(
+                r'\textbf{Number of authors:} ' + str(summary['N_authors']) + r'\\'
+            ))
+            doc.append(pylatex.NoEscape(
+                r'\textbf{Preprints excluded:} ' + str(summary.get('preprints_excluded', 'N/A')) + r'\\'
+            ))
+            doc.append(pylatex.NoEscape(
+                r'\textbf{Specific author:} ' + str(summary['specific_author']) + r'\\'
+            ))
+            doc.append(pylatex.NoEscape(
+                r'\textbf{Specific author papers:} ' + str(summary['specific_author_n_papers']) + r'\\'
+            ))
+            doc.append(pylatex.NoEscape(
+                r'\textbf{Specific author citations:} ' + str(summary['specific_author_n_citations']) + r'\\'
+            ))
+            doc.append(pylatex.NoEscape(
+                r'\textbf{Specific author papers percentile:} ' + str(summary['specific_n_papers_percentile']) + r'\\'
+            ))
+            doc.append(pylatex.NoEscape(
+                r'\textbf{Specific author citations percentile:} ' + str(summary['specific_n_citations_percentile']) + r'\\'
+            ))
+
+        def add_plot(doc, image_path, caption):
+            with doc.create(pylatex.Figure(position='h!')) as plot:
+                plot.add_image(image_path, width=pylatex.utils.NoEscape(r'0.8\textwidth'))
+                plot.add_caption(caption)
+
+        # Main LaTeX Document
+        doc = pylatex.Document()
+        doc.preamble.append(pylatex.Command('title', 'Buck Author Publications Analysis Report'))
+        doc.preamble.append(pylatex.Command('author', 'MBelic'))
+        doc.preamble.append(pylatex.Command('date', pylatex.NoEscape(r'\today')))
+        doc.append(pylatex.NoEscape(r'\maketitle'))
+
+        # Add summaries for all JSON objects
+        for idx, summary in enumerate(summary_list, start=1):
+            title = f"Summary {idx} ({summary.get('label', 'No Label')})"
+            add_summary_section(doc, title, summary)
+
+        doc.append(pylatex.Section('Plots'))
+        for idx, summary in enumerate(summary_list, start=1):
+            plot_label = summary.get('label', f'Summary {idx}')
+            add_plot(doc, summary['n_papers_plot'], f'Number of papers by author in 2024 ({plot_label})')
+            add_plot(doc, summary['n_citations_plot'], f'Total citations by author in 2024 ({plot_label})')
+
+        # Generate PDF
+        doc.generate_pdf('author_report', clean_tex=False)
+        
+        # Compile PDF
+        subprocess.run(['pdflatex', 'author_report.tex'])
+        logger.info("Latex report generated.")
+        return "author_report.tex"
+    
+    @staticmethod
+    def compile_latex(texfile):
+        subprocess.run(['pdflatex', texfile])
+        logger.info("Latex report compiled.")
+
+
 
 if __name__ == "__main__":
-    analyzer = AuthorAnalyzer(config_path="author_config.cfg")
-    analyzer.analyze_csv("author_publications_20241207205456_Plus_Manual.csv")
+    file_to_analyze = "author_publications_20241207205456_Plus_Manual.csv"
+    config_path = "author_config.cfg"
+    analyzer = AuthorAnalyzer(config_path=config_path)
+    
+    summary_full = analyzer.analyze_csv(
+        csv_path=file_to_analyze,
+        exclude_preprints=False
+        )
+
+    summary_no_preprint = analyzer.analyze_csv(
+        csv_path=file_to_analyze,
+        exclude_preprints=True
+        )
+    
+    analyzer.generate_latex_report([summary_full, summary_no_preprint])
+    
+
