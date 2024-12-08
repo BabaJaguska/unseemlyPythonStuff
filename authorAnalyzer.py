@@ -177,7 +177,7 @@ class AuthorAnalyzer:
 
         def add_plot(doc, image_path, caption):
             with doc.create(pylatex.Figure(position='h!')) as plot:
-                plot.add_image(image_path, width=pylatex.utils.NoEscape(r'0.8\textwidth'))
+                plot.add_image(image_path, width=pylatex.utils.NoEscape(r'1.1\textwidth'))
                 plot.add_caption(caption)
 
         # Main LaTeX Document
